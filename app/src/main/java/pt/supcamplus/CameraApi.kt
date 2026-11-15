@@ -1,5 +1,8 @@
 package pt.supcamplus
 
+import android.util.Xml
+import org.xmlpull.v1.XmlPullParser
+import java.io.StringReader
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -9,19 +12,29 @@ class CameraApi(val ip: String = "192.168.1.1") {
     data class Opt(val value: String, val label: String)
     data class Menu(val id: String, val title: String, val opts: List<Opt>)
 
+    companion object {
+        // MODE0..MODE7, pela ordem: vídeo, câmara lenta, loop, time-lapse, foto, foto auto, contínuo, temporizada.
+        val modeFiles = listOf(
+            "user_menus_mode_normal_rec", "user_menus_mode_slowly_rec",
+            "user_menus_mode_loop_rec", "user_menus_mode_timelapse_rec",
+            "user_menus_mode_normal_pic", "user_menus_mode_auto_pic",
+            "user_menus_mode_continue_pic", "user_menus_mode_timing_pic"
+        )
+        const val GENERAL_FILE = "user_menus_setting"
+
+        // Desligar o Wi-Fi da câmara cortaria a ligação.
+        private val skipIds = setOf("Camera.Menu.WiFi")
+
+        private val titleOverride = mapOf(
+            "Camera.Menu.MovieSin" to "Rodar gravação 180°"
+        )
+    }
+
     private val base = "http://$ip"
     private val menuDir = "$base/customer/UI/release/assets/default/raw/menu/"
-    private val menuFiles = listOf(
-        "user_menus_setting",
-        "user_menus_mode_normal_rec", "user_menus_mode_slowly_rec",
-        "user_menus_mode_loop_rec", "user_menus_mode_timelapse_rec",
-        "user_menus_mode_normal_pic", "user_menus_mode_auto_pic",
-        "user_menus_mode_continue_pic", "user_menus_mode_timing_pic"
-    )
-
-    private val menuRe = Regex("<menu\\b([^>]*)>(.*?)</menu>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
-    private val tagRe = Regex("<(\\w+)\\b([^>]*?)/?>")
-    private val attrRe = Regex("(\\w+)\\s*=\\s*\"([^\"]*)\"")
+    private val strRe = Regex("<string\\s+name=\"([^\"]+)\"\\s*>(.*?)</string>", RegexOption.DOT_MATCHES_ALL)
+    private val langRe = Regex("<language\\s+name=\"([^\"]+)\"\\s*>([^<]*)</language>")
+    private var strCache: Map<String, String>? = null
 
     fun httpGet(url: String): String? = try {
         val c = URL(url).openConnection() as HttpURLConnection
@@ -59,6 +72,71 @@ class CameraApi(val ip: String = "192.168.1.1") {
         return "rtsp://$ip/liveRTSP/av$id"
     }
 
+    // Textos traduzidos da própria câmara (pt_PT, com en_US como alternativa).
+    private fun strings(): Map<String, String> {
+        strCache?.let { return it }
+        val out = HashMap<String, String>()
+        val t = httpGet("$base/customer/UI/release/assets/default/raw/strings/strings")
+        if (t != null) {
+            for (m in strRe.findAll(t)) {
+                val langs = langRe.findAll(m.groupValues[2]).associate { it.groupValues[1] to it.groupValues[2].trim() }
+                val v = langs["pt_PT"] ?: langs["en_US"]
+                if (v != null) out[m.groupValues[1]] = v
+            }
+        }
+        if (out.isNotEmpty()) strCache = out
+        return out
+    }
+
+    // Lê um ficheiro de menus da câmara (XML <setting><menu id=.. strid=..><menu value=.. strid=../>...).
+    fun loadMenus(file: String): List<Menu> {
+        val raw = httpGet(menuDir + file) ?: return emptyList()
+        val str = strings()
+        val out = ArrayList<Menu>()
+        var id: String? = null
+        var type = ""
+        var title = ""
+        var opts = ArrayList<Opt>()
+        try {
+            val p = Xml.newPullParser()
+            p.setInput(StringReader(raw))
+            var depth = 0
+            var ev = p.eventType
+            while (ev != XmlPullParser.END_DOCUMENT) {
+                if (ev == XmlPullParser.START_TAG) {
+                    depth++
+                    if (p.name == "menu" && depth == 2) {
+                        id = p.getAttributeValue(null, "id")
+                        type = p.getAttributeValue(null, "type") ?: ""
+                        val sid = p.getAttributeValue(null, "strid") ?: id ?: ""
+                        title = str[sid] ?: sid
+                        opts = ArrayList()
+                    } else if (p.name == "menu" && depth == 3) {
+                        val v = p.getAttributeValue(null, "value")
+                        if (v != null) {
+                            val sid = p.getAttributeValue(null, "strid") ?: v
+                            opts.add(Opt(v, str[sid] ?: sid))
+                        }
+                    }
+                } else if (ev == XmlPullParser.END_TAG) {
+                    if (p.name == "menu" && depth == 2) {
+                        val i = id
+                        if (i != null && i.startsWith("Camera.Menu.") && i !in skipIds &&
+                            (type == "items" || type == "boolean") && opts.isNotEmpty()
+                        ) {
+                            out.add(Menu(i, titleOverride[i] ?: title, opts))
+                        }
+                    }
+                    depth--
+                }
+                ev = p.next()
+            }
+        } catch (e: Exception) {
+            // devolve o que já foi lido
+        }
+        return out
+    }
+
     // Texto bruto de tudo o que a câmara devolve, para depuração.
     fun diagnostics(): String {
         val sb = StringBuilder()
@@ -69,50 +147,7 @@ class CameraApi(val ip: String = "192.168.1.1") {
             sec("get $p", httpGet("$base/cgi-bin/Config.cgi?action=get&property=$p"))
         }
         sec("cammenu.xml", httpGet("$base/cammenu.xml"))
-        for (f in menuFiles + "user_modes_setting") sec(f, httpGet(menuDir + f))
-        sec("strings", httpGet("$base/customer/UI/release/assets/default/raw/strings/strings")?.take(20000))
+        for (f in listOf(GENERAL_FILE) + modeFiles + "user_modes_setting") sec(f, httpGet(menuDir + f))
         return sb.toString()
-    }
-
-    private fun attrs(s: String): Map<String, String> =
-        attrRe.findAll(s).associate { it.groupValues[1] to it.groupValues[2] }
-
-    private fun loadStrings(): Map<String, String> {
-        val t = httpGet("$base/customer/UI/release/assets/default/raw/strings/strings") ?: return emptyMap()
-        val m = HashMap<String, String>()
-        Regex("name\\s*=\\s*\"([^\"]+)\"[^>]*>([^<]*)<").findAll(t)
-            .forEach { m[it.groupValues[1]] = it.groupValues[2].trim() }
-        if (m.isEmpty()) {
-            t.lineSequence().forEach { l ->
-                val i = l.indexOf('=')
-                if (i > 0) m[l.substring(0, i).trim()] = l.substring(i + 1).trim().trim('"')
-            }
-        }
-        return m
-    }
-
-    // Os menus vêm da própria câmara, por isso funcionam para qualquer modelo MStar.
-    fun loadMenus(): List<Menu> {
-        val str = loadStrings()
-        val out = LinkedHashMap<String, Menu>()
-        for (f in menuFiles) {
-            val xml = httpGet(menuDir + f) ?: continue
-            for (m in menuRe.findAll(xml)) {
-                val a = attrs(m.groupValues[1])
-                val id = a["command"] ?: continue
-                if (out.containsKey(id)) continue
-                val opts = ArrayList<Opt>()
-                for (t in tagRe.findAll(m.groupValues[2])) {
-                    if (t.groupValues[1].equals("sel", true)) continue
-                    val ia = attrs(t.groupValues[2])
-                    val v = ia["value"] ?: ia["id"] ?: continue
-                    val sid = ia["strid"] ?: ia["title"] ?: v
-                    opts.add(Opt(v, str[sid] ?: sid))
-                }
-                val sid = a["strid"] ?: id
-                out[id] = Menu(id, str[sid] ?: sid, opts)
-            }
-        }
-        return out.values.toList()
     }
 }
