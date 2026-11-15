@@ -373,14 +373,16 @@ class LiveView(private val act: ComponentActivity, private val api: CameraApi) :
             val o = m.opts[i]
             setStatus("A aplicar: ${m.title}…")
             io.execute {
-                var raw = api.cgiRaw("set", m.id, o.value) ?: "sem resposta"
-                var cur2 = api.cgi("get", m.id)?.get(m.id)
+                val names = listOfNotNull(m.cmd, m.id).distinct()
+                var raw = ""
+                var cur2: String? = null
                 var via = ""
-                if (cur2 != o.value) {
-                    val short = m.id.removePrefix("Camera.Menu.")
-                    raw = api.cgiRaw("set", short, o.value) ?: "sem resposta"
+                for (nm in names) {
+                    raw = api.cgiRaw("set", nm, o.value) ?: "sem resposta"
+                    Thread.sleep(300)
                     cur2 = api.cgi("get", m.id)?.get(m.id)
-                    via = " (via $short)"
+                    via = " (via $nm)"
+                    if (cur2 == o.value) break
                 }
                 if (cur2 == o.value) {
                     vals = vals + (m.id to o.value)

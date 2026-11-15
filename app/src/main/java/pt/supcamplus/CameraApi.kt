@@ -10,7 +10,7 @@ import java.net.URL
 class CameraApi(val ip: String = "192.168.1.1") {
 
     data class Opt(val value: String, val label: String)
-    data class Menu(val id: String, val title: String, val opts: List<Opt>)
+    data class Menu(val id: String, val title: String, val opts: List<Opt>, val cmd: String? = null)
 
     companion object {
         // MODE0..MODE7, pela ordem: vídeo, câmara lenta, loop, time-lapse, foto, foto auto, contínuo, temporizada.
@@ -99,6 +99,7 @@ class CameraApi(val ip: String = "192.168.1.1") {
         val out = ArrayList<Menu>()
         var id: String? = null
         var type = ""
+        var cmd: String? = null
         var title = ""
         var opts = ArrayList<Opt>()
         try {
@@ -112,6 +113,7 @@ class CameraApi(val ip: String = "192.168.1.1") {
                     if (p.name == "menu" && depth == 2) {
                         id = p.getAttributeValue(null, "id")
                         type = p.getAttributeValue(null, "type") ?: ""
+                        cmd = p.getAttributeValue(null, "command")
                         val sid = p.getAttributeValue(null, "strid") ?: id ?: ""
                         title = str[sid] ?: sid
                         opts = ArrayList()
@@ -128,7 +130,7 @@ class CameraApi(val ip: String = "192.168.1.1") {
                         if (i != null && i.startsWith("Camera.Menu.") && i !in skipIds &&
                             (type == "items" || type == "boolean") && opts.isNotEmpty()
                         ) {
-                            out.add(Menu(i, titleOverride[i] ?: title, opts))
+                            out.add(Menu(i, titleOverride[i] ?: title, opts, cmd))
                         }
                     }
                     depth--
