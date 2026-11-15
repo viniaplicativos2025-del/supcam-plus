@@ -42,10 +42,12 @@ import java.io.File
 import java.io.FileInputStream
 
 // Editor: cortar, rodar (90/180/270), espelhar, velocidade, sem áudio, guardar fotograma.
-class EditorView(private val act: ComponentActivity, private val onPick: () -> Unit) : ScrollView(act) {
+class EditorView(private val act: ComponentActivity, private val onPick: () -> Unit) : LinearLayout(act) {
 
     private val ui = Handler(Looper.getMainLooper())
     private val box = LinearLayout(act)
+    private val top = LinearLayout(act)
+    private val scroll = ScrollView(act)
     private val ar = AspectRatioFrameLayout(act)
     private val tv = TextureView(act)
     private val info = Ui.text(act, "Escolhe um vídeo do telemóvel.", 13f, Ui.MUTED)
@@ -72,24 +74,29 @@ class EditorView(private val act: ComponentActivity, private val onPick: () -> U
 
     init {
         setBackgroundColor(Ui.BG)
+        orientation = VERTICAL
+        top.orientation = VERTICAL
+        top.setPadding(dp(14), dp(10), dp(14), dp(8))
+        top.setBackgroundColor(Ui.BG)
         box.orientation = LinearLayout.VERTICAL
-        box.setPadding(dp(14), dp(14), dp(14), dp(24))
-        addView(box)
+        box.setPadding(dp(14), dp(4), dp(14), dp(24))
+        scroll.addView(box)
+        addView(top, LayoutParams(-1, -2))
+        addView(scroll, LayoutParams(-1, 0, 1f))
 
-        box.addView(Ui.text(act, "Editor de vídeo", 22f, Ui.TEXT, true))
-        box.addView(Ui.button(act, "Escolher vídeo", true) { onPick() }, Ui.lp(act, -1, -2, t = 10))
+        top.addView(Ui.button(act, "Escolher vídeo", true) { onPick() })
 
         val vb = FrameLayout(act)
         vb.setBackgroundColor(Color.BLACK)
         ar.addView(tv, FrameLayout.LayoutParams(-1, -1))
         vb.addView(ar, FrameLayout.LayoutParams(-1, -1))
-        box.addView(vb, Ui.lp(act, -1, 220, t = 12))
-        box.addView(Ui.button(act, "Play / Pausa", false) {
+        top.addView(vb, Ui.lp(act, -1, 200, t = 8))
+        top.addView(Ui.button(act, "Play / Pausa", false) {
             val p = player
             if (p != null) {
                 if (p.isPlaying) p.pause() else p.play()
             }
-        }, Ui.lp(act, -1, -2, t = 8))
+        }, Ui.lp(act, -1, -2, t = 6))
 
         sStart.max = 1000
         sEnd.max = 1000
@@ -174,11 +181,23 @@ class EditorView(private val act: ComponentActivity, private val onPick: () -> U
     }
 
     private fun applyColorPreview() {
-        try {
-            player?.setVideoEffects(colorEffects())
-        } catch (e: Exception) {
-            info.text = "Pré-visualização de cor indisponível; aplica-se ao exportar."
-        }
+        val cm = android.graphics.ColorMatrix()
+        cm.setSaturation(1f + satur)
+        val c = 1f + contr
+        val t = (-0.5f * c + 0.5f) * 255f + bright * 0.5f * 255f
+        val w = warmth * 30f
+        val m = android.graphics.ColorMatrix(
+            floatArrayOf(
+                c, 0f, 0f, 0f, t + w,
+                0f, c, 0f, 0f, t,
+                0f, 0f, c, 0f, t - w,
+                0f, 0f, 0f, 1f, 0f
+            )
+        )
+        cm.postConcat(m)
+        val paint = android.graphics.Paint()
+        paint.colorFilter = android.graphics.ColorMatrixColorFilter(cm)
+        tv.setLayerType(View.LAYER_TYPE_HARDWARE, paint)
     }
 
     private fun card(title: String, vararg views: View) {
