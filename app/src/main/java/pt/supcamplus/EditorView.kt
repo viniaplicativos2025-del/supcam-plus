@@ -24,6 +24,9 @@ import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.SonicAudioProcessor
+import androidx.media3.effect.Brightness
+import androidx.media3.effect.Contrast
+import androidx.media3.effect.HslAdjustment
 import androidx.media3.effect.ScaleAndRotateTransformation
 import androidx.media3.effect.SpeedChangeEffect
 import androidx.media3.exoplayer.ExoPlayer
@@ -56,6 +59,10 @@ class EditorView(private val act: ComponentActivity, private val onPick: () -> U
     private var flipH = false
     private var flipV = false
     private var mute = false
+    private var bright = 0f
+    private var contr = 0f
+    private var satur = 0f
+    private var warmth = 0f
     private var player: ExoPlayer? = null
     private var uri: Uri? = null
     private var durMs = 0L
@@ -118,11 +125,60 @@ class EditorView(private val act: ComponentActivity, private val onPick: () -> U
         flips.addView(toggle("Sem áudio", { mute }, { mute = it }), Ui.lp(act, -2, -2, l = 6))
         card("Espelho e áudio", flips)
 
+        card(
+            "Cor",
+            slider("Brilho") { bright = it },
+            slider("Contraste") { contr = it },
+            slider("Saturação") { satur = it },
+            slider("Tom (frio / quente)") { warmth = it },
+            Ui.group(act, listOf("Cor", "Preto e branco"), 0) { satur = if (it == 1) -1f else 0f; applyColorPreview() }
+        )
+
         card("Velocidade", Ui.group(act, speeds.map { "${it}×" }, speedIdx) { speedIdx = it })
 
         box.addView(Ui.button(act, "Exportar vídeo", true) { export() }, Ui.lp(act, -1, -2, t = 16))
         box.addView(Ui.button(act, "Guardar fotograma atual", false) { saveFrame() }, Ui.lp(act, -1, -2, t = 8))
         box.addView(info, Ui.lp(act, -1, -2, t = 12))
+    }
+
+    private fun slider(label: String, set: (Float) -> Unit): LinearLayout {
+        val row = LinearLayout(act)
+        row.orientation = LinearLayout.VERTICAL
+        val t = Ui.text(act, "$label: 0", 12f, Ui.MUTED)
+        val sb = SeekBar(act)
+        sb.max = 200
+        sb.progress = 100
+        sb.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
+                val v = (p - 100) / 100f
+                t.text = "$label: ${p - 100}"
+                set(v)
+                if (fromUser) applyColorPreview()
+            }
+
+            override fun onStartTrackingTouch(s: SeekBar?) {}
+            override fun onStopTrackingTouch(s: SeekBar?) {}
+        })
+        row.addView(t)
+        row.addView(sb)
+        return row
+    }
+
+    private fun colorEffects(): List<Effect> {
+        val l = ArrayList<Effect>()
+        if (bright != 0f) l.add(Brightness(bright * 0.5f))
+        if (contr != 0f) l.add(Contrast(contr))
+        if (satur != 0f) l.add(HslAdjustment.Builder().adjustSaturation(satur * 100f).build())
+        if (warmth != 0f) l.add(HslAdjustment.Builder().adjustHue(warmth * -20f).build())
+        return l
+    }
+
+    private fun applyColorPreview() {
+        try {
+            player?.setVideoEffects(colorEffects())
+        } catch (e: Exception) {
+            info.text = "Pré-visualização de cor indisponível; aplica-se ao exportar."
+        }
     }
 
     private fun card(title: String, vararg views: View) {
@@ -220,6 +276,7 @@ class EditorView(private val act: ComponentActivity, private val onPick: () -> U
                     .build()
             )
         }
+        video.addAll(colorEffects())
         val speed = speeds[speedIdx]
         if (speed != 1f) {
             video.add(SpeedChangeEffect(speed))
