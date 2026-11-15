@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -28,3 +31,10 @@ jobs:
         with:
           name: supcam-plus-debug
           path: app/build/outputs/apk/debug/*.apk
+      - name: Publicar APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/*.apk SupCamPlus.apk
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest SupCamPlus.apk --title "SupCam Plus (ultima build)" --notes "APK debug da ultima build" --target "$GITHUB_SHA"
