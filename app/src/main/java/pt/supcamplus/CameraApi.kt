@@ -50,10 +50,14 @@ class CameraApi(val ip: String = "192.168.1.1") {
     }
 
     // action = get | set | del. Devolve null se a câmara não respondeu.
-    fun cgi(action: String, property: String, value: String? = null): Map<String, String>? {
+    fun cgiRaw(action: String, property: String, value: String? = null): String? {
         val q = StringBuilder("action=").append(action).append("&property=").append(property)
         if (value != null) q.append("&value=").append(value)
-        val body = httpGet("$base/cgi-bin/Config.cgi?$q") ?: return null
+        return httpGet("$base/cgi-bin/Config.cgi?$q")
+    }
+
+    fun cgi(action: String, property: String, value: String? = null): Map<String, String>? {
+        val body = cgiRaw(action, property, value) ?: return null
         return parse(body)
     }
 

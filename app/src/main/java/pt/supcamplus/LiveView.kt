@@ -15,6 +15,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -36,6 +37,7 @@ class LiveView(private val act: ComponentActivity, private val api: CameraApi) :
     private val tv = TextureView(act)
     private val videoBox = FrameLayout(act)
     private val statusChip = Ui.text(act, "", 12f, Color.WHITE)
+    private val latChip = Ui.text(act, "", 11f, Color.WHITE)
 
     private val body = LinearLayout(act)
     private val panel = LinearLayout(act)
@@ -55,6 +57,7 @@ class LiveView(private val act: ComponentActivity, private val api: CameraApi) :
     private var mirror = false
     private var recording = false
     private var alive = false
+    private var useTcp = false
     private var mode = 2
     private var vals: Map<String, String> = emptyMap()
 
@@ -65,6 +68,21 @@ class LiveView(private val act: ComponentActivity, private val api: CameraApi) :
             if (!alive) return
             io.execute { api.cgi("set", "StreamStatus", "ON") }
             ui.postDelayed(this, 5000)
+        }
+    }
+
+    // Mostra o atraso do direto (quando o leitor o consegue medir).
+    private val tick = object : Runnable {
+        override fun run() {
+            if (!alive) return
+            val p = player
+            if (p != null && p.playbackState == Player.STATE_READY) {
+                val off = p.currentLiveOffset
+                latChip.text = if (off != C.TIME_UNSET) "atraso %.1f s".format(off / 1000.0) else "atraso n/d"
+            } else {
+                latChip.text = ""
+            }
+            ui.postDelayed(this, 1000)
         }
     }
 
@@ -80,6 +98,11 @@ class LiveView(private val act: ComponentActivity, private val api: CameraApi) :
         val sp = FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START)
         sp.setMargins(dp(8), dp(8), 0, 0)
         videoBox.addView(statusChip, sp)
+        latChip.setPadding(dp(8), dp(2), dp(8), dp(2))
+        latChip.background = Ui.bg(0x99000000.toInt(), 10, act)
+        val lpc = FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START)
+        lpc.setMargins(dp(8), 0, 0, dp(8))
+        videoBox.addView(latChip, lpc)
         val quick = LinearLayout(act)
         quick.addView(Ui.chip(act, "Rodar 180°", false) { rot = if (rot == 0f) 180f else 0f; applyFlip() })
         quick.addView(Ui.chip(act, "Espelhar", false) { mirror = !mirror; applyFlip() }, Ui.lp(act, -2, -2, l = 6))
@@ -108,6 +131,11 @@ class LiveView(private val act: ComponentActivity, private val api: CameraApi) :
         shutterRow.gravity = Gravity.CENTER
         shutterRow.addView(shutter, Ui.lp(act, 84, 84))
         ctrlView.addView(shutterRow, Ui.lp(act, -1, -2, t = 18))
+        ctrlView.addView(Ui.text(act, "Transporte do vídeo", 12f, Ui.MUTED), Ui.lp(act, -2, -2, t = 18))
+        ctrlView.addView(
+            Ui.group(act, listOf("UDP (mais rápido)", "TCP (mais estável)"), 0) { useTcp = it == 1; connect() },
+            Ui.lp(act, -1, -2, t = 6)
+        )
         val tools = LinearLayout(act)
         tools.gravity = Gravity.CENTER
         tools.addView(Ui.chip(act, "Ligar de novo", false) { connect() })
@@ -184,14 +212,33 @@ class LiveView(private val act: ComponentActivity, private val api: CameraApi) :
     }
 
     private fun selectMode(n: Int) {
-        mode = n
-        recording = false
-        updateShutter()
         setStatus("A mudar para ${modeNames[n]}…")
         io.execute {
-            api.cgi("set", "sysworkmode", "MODE$n")
-            Thread.sleep(800)
-            loadSettings()
+            var ok = false
+            var resp = ""
+            for (prop in listOf("sysworkmode", "Camera.Menu.sysworkmode")) {
+                resp = api.cgiRaw("set", prop, "MODE$n") ?: "sem resposta"
+                for (i in 1..12) {
+                    Thread.sleep(500)
+                    val cur = api.cgi("get", "Camera.Menu.sysworkmode")?.get("Camera.Menu.sysworkmode")
+                    if (cur == "MODE$n") {
+                        ok = true
+                        break
+                    }
+                }
+                if (ok) break
+            }
+            if (!ok) {
+                setStatus("O modo não mudou. Resposta: " + resp.replace('\n', ' ').take(80))
+                ui.post { buildModeRow() }
+                return@execute
+            }
+            ui.post {
+                mode = n
+                recording = false
+                updateShutter()
+            }
+            connect()
         }
     }
 
@@ -232,6 +279,8 @@ class LiveView(private val act: ComponentActivity, private val api: CameraApi) :
                 startPlayer(url)
                 ui.removeCallbacks(beat)
                 ui.postDelayed(beat, 5000)
+                ui.removeCallbacks(tick)
+                ui.postDelayed(tick, 1000)
             }
             loadSettings()
         }
@@ -261,8 +310,16 @@ class LiveView(private val act: ComponentActivity, private val api: CameraApi) :
             .setBufferDurationsMs(250, 1000, 100, 250)
             .build()
         val p = ExoPlayer.Builder(act).setLoadControl(lc).build()
-        val src = RtspMediaSource.Factory().setForceUseRtpTcp(true)
-            .createMediaSource(MediaItem.fromUri(url))
+        val live = MediaItem.LiveConfiguration.Builder()
+            .setTargetOffsetMs(300)
+            .setMinOffsetMs(100)
+            .setMaxOffsetMs(1500)
+            .setMinPlaybackSpeed(0.97f)
+            .setMaxPlaybackSpeed(1.15f)
+            .build()
+        val item = MediaItem.Builder().setUri(url).setLiveConfiguration(live).build()
+        val src = RtspMediaSource.Factory().setForceUseRtpTcp(useTcp)
+            .createMediaSource(item)
         p.setVideoTextureView(tv)
         p.setMediaSource(src)
         p.addListener(object : Player.Listener {
