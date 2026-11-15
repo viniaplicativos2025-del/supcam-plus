@@ -373,8 +373,22 @@ class LiveView(private val act: ComponentActivity, private val api: CameraApi) :
             val o = m.opts[i]
             setStatus("A aplicar: ${m.title}…")
             io.execute {
-                val r = api.cgi("set", m.id, o.value)
-                setStatus(if (r != null) "${m.title}: ${o.label}" else "Falhou: ${m.title}")
+                var raw = api.cgiRaw("set", m.id, o.value) ?: "sem resposta"
+                var cur2 = api.cgi("get", m.id)?.get(m.id)
+                var via = ""
+                if (cur2 != o.value) {
+                    val short = m.id.removePrefix("Camera.Menu.")
+                    raw = api.cgiRaw("set", short, o.value) ?: "sem resposta"
+                    cur2 = api.cgi("get", m.id)?.get(m.id)
+                    via = " (via $short)"
+                }
+                if (cur2 == o.value) {
+                    vals = vals + (m.id to o.value)
+                    api.cgi("set", "StreamStatus", "ON")
+                    setStatus("${m.title}: ${o.label} confirmado$via")
+                } else {
+                    setStatus("Câmara não aceitou ${m.title}. Lê '$cur2'. Resp: " + raw.replace('\n', ' ').take(70))
+                }
             }
         }
         card.addView(g, Ui.lp(act, -1, -2, t = 8))
