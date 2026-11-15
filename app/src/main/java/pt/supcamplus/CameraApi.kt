@@ -59,6 +59,21 @@ class CameraApi(val ip: String = "192.168.1.1") {
         return "rtsp://$ip/liveRTSP/av$id"
     }
 
+    // Texto bruto de tudo o que a câmara devolve, para depuração.
+    fun diagnostics(): String {
+        val sb = StringBuilder()
+        fun sec(t: String, v: String?) {
+            sb.append("##### ").append(t).append('\n').append(v ?: "(sem resposta)").append("\n\n")
+        }
+        for (p in listOf("Camera.Preview.*", "Camera.Menu.*", "Camera.Menu.UIMode")) {
+            sec("get $p", httpGet("$base/cgi-bin/Config.cgi?action=get&property=$p"))
+        }
+        sec("cammenu.xml", httpGet("$base/cammenu.xml"))
+        for (f in menuFiles + "user_modes_setting") sec(f, httpGet(menuDir + f))
+        sec("strings", httpGet("$base/customer/UI/release/assets/default/raw/strings/strings")?.take(20000))
+        return sb.toString()
+    }
+
     private fun attrs(s: String): Map<String, String> =
         attrRe.findAll(s).associate { it.groupValues[1] to it.groupValues[2] }
 

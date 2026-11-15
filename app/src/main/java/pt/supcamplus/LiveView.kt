@@ -1,6 +1,9 @@
 package pt.supcamplus
 
+import android.content.ContentValues
 import android.graphics.Color
+import android.provider.MediaStore
+import android.view.ViewGroup
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
@@ -20,6 +23,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -66,7 +70,7 @@ class LiveView(private val act: ComponentActivity, private val api: CameraApi) :
         panel.addView(panelBox)
         panel.setBackgroundColor(0xDD000000.toInt())
         panel.visibility = View.GONE
-        addView(panel, FrameLayout.LayoutParams(dp(320), -1, Gravity.START))
+        addView(panel, FrameLayout.LayoutParams(dp(240), -1, Gravity.START))
 
         val col = LinearLayout(act)
         col.orientation = LinearLayout.VERTICAL
@@ -97,7 +101,27 @@ class LiveView(private val act: ComponentActivity, private val api: CameraApi) :
         btn("Rodar 180°") { rot = if (rot == 0f) 180f else 0f; applyFlip() }
         btn("Espelhar") { mirror = !mirror; applyFlip() }
         btn("Ligar") { connect() }
+        btn("Diagnóstico") { saveDiag() }
         addView(col, FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.TOP))
+    }
+
+    private fun saveDiag() {
+        setStatus("A recolher diagnóstico…")
+        io.execute {
+            val txt = api.diagnostics()
+            try {
+                val cv = ContentValues()
+                val name = "supcamplus_diag_${System.currentTimeMillis()}.txt"
+                cv.put(MediaStore.Downloads.DISPLAY_NAME, name)
+                cv.put(MediaStore.Downloads.MIME_TYPE, "text/plain")
+                cv.put(MediaStore.Downloads.RELATIVE_PATH, "Download")
+                val u = act.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv)!!
+                act.contentResolver.openOutputStream(u)!!.use { it.write(txt.toByteArray()) }
+                setStatus("Guardado em Transferências/$name")
+            } catch (e: Exception) {
+                setStatus("Falhou ao guardar: ${e.message}")
+            }
+        }
     }
 
     private fun applyFlip() {
@@ -146,7 +170,10 @@ class LiveView(private val act: ComponentActivity, private val api: CameraApi) :
 
     private fun startPlayer(url: String) {
         player?.release()
-        val p = ExoPlayer.Builder(act).build()
+        val lc = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(250, 1000, 100, 250)
+            .build()
+        val p = ExoPlayer.Builder(act).setLoadControl(lc).build()
         val src = RtspMediaSource.Factory().setForceUseRtpTcp(true)
             .createMediaSource(MediaItem.fromUri(url))
         p.setVideoTextureView(tv)
@@ -206,7 +233,13 @@ class LiveView(private val act: ComponentActivity, private val api: CameraApi) :
         t.setTextColor(Color.WHITE)
         t.setPadding(dp(8), dp(10), dp(8), 0)
         val sp = Spinner(act)
-        sp.adapter = ArrayAdapter(act, android.R.layout.simple_spinner_dropdown_item, m.opts.map { it.label })
+        sp.adapter = object : ArrayAdapter<String>(act, android.R.layout.simple_spinner_dropdown_item, m.opts.map { it.label }) {
+            override fun getView(pos: Int, cv: View?, parent: ViewGroup): View {
+                val v = super.getView(pos, cv, parent)
+                (v as TextView).setTextColor(Color.WHITE)
+                return v
+            }
+        }
         var cur = m.opts.indexOfFirst { it.value == current }.coerceAtLeast(0)
         sp.setSelection(cur, false)
         sp.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
