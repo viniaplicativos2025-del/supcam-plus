@@ -106,8 +106,8 @@ class LiveView(private val act: ComponentActivity, private val api: CameraApi) :
         val quick = LinearLayout(act)
         quick.addView(Ui.chip(act, "Rodar 180°", false) { rot = if (rot == 0f) 180f else 0f; applyFlip() })
         quick.addView(Ui.chip(act, "Espelhar", false) { mirror = !mirror; applyFlip() }, Ui.lp(act, -2, -2, l = 6))
-        val qp = FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END)
-        qp.setMargins(0, dp(8), dp(8), 0)
+        val qp = FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END)
+        qp.setMargins(0, 0, dp(8), dp(8))
         videoBox.addView(quick, qp)
 
         // painel
