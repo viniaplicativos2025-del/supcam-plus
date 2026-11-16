@@ -264,6 +264,7 @@ class LiveView(
     }
 
     private fun selectMode(n: Int) {
+        Trace.log("selectMode $n")
         setStatus("A mudar para ${modeNames[n]}…")
         ui.post {
             ui.removeCallbacks(beat)
@@ -280,6 +281,7 @@ class LiveView(
                 var resp = ""
                 for (prop in listOf("sysworkmode", "Camera.Menu.sysworkmode")) {
                     resp = api.cgiRaw("set", prop, "MODE$n") ?: "sem resposta"
+                    Trace.log("set $prop MODE$n -> ${resp.replace('\n', ' ').take(40)}")
                     for (i in 1..12) {
                         Thread.sleep(500)
                         val cur = api.cgi("get", "Camera.Menu.sysworkmode")?.get("Camera.Menu.sysworkmode")
@@ -302,6 +304,7 @@ class LiveView(
                     updateShutter()
                 }
                 // a câmara reinicia o pipeline de vídeo ao mudar de modo
+                Trace.log("modo confirmado, espera")
                 Thread.sleep(2500)
                 connect()
             } catch (e: Throwable) {
@@ -322,6 +325,7 @@ class LiveView(
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         alive = true
+        Trace.log("attached")
         ui.removeCallbacks(trkTick)
         ui.post(trkTick)
         showLastCrash()
@@ -357,6 +361,7 @@ class LiveView(
     }
 
     override fun onDetachedFromWindow() {
+        Trace.log("detached")
         alive = false
         ui.removeCallbacksAndMessages(null)
         player?.release()
@@ -365,6 +370,7 @@ class LiveView(
     }
 
     private fun connect() {
+        Trace.log("connect")
         setStatus("A ligar à câmara ${api.ip}…")
         io.execute {
             val preview = api.cgi("get", "Camera.Preview.*")
@@ -374,6 +380,7 @@ class LiveView(
             }
             api.cgi("set", "StreamStatus", "ON")
             val url = api.liveUrl(preview["Camera.Preview.RTSP.av"])
+            Trace.log("url $url")
             ui.post {
                 if (!alive) return@post
                 try {
@@ -400,6 +407,7 @@ class LiveView(
     }
 
     private fun loadSettings0() {
+        Trace.log("loadSettings")
         val v = api.cgi("get", "Camera.Menu.*") ?: emptyMap()
         val n = v["Camera.Menu.sysworkmode"]?.removePrefix("MODE")?.toIntOrNull()
         val md = if (n != null && n in 0..7) n else mode
@@ -408,6 +416,7 @@ class LiveView(
         ui.post {
             if (alive) {
                 try {
+                    Trace.log("buildSettings modo $md")
                     vals = v
                     mode = md
                     buildModeRow()
@@ -421,6 +430,7 @@ class LiveView(
     }
 
     private fun startPlayer(url: String) {
+        Trace.log("startPlayer")
         player?.release()
         val lc = DefaultLoadControl.Builder()
             .setBufferDurationsMs(100, 500, 50, 100)
@@ -444,10 +454,12 @@ class LiveView(
             }
 
             override fun onPlaybackStateChanged(state: Int) {
+                Trace.log("player estado $state")
                 if (state == Player.STATE_READY) setStatus("Em direto")
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                Trace.log("player erro ${error.errorCodeName} ${error.message}")
                 setStatus("Stream: ${error.errorCodeName}. A tentar de novo…")
                 ui.postDelayed({ if (alive) player?.prepare() }, 3000)
             }
@@ -585,7 +597,7 @@ class LiveView(
             } catch (_: Exception) {
                 null
             }
-            val txt = "##### ultima falha da app\n" + (crash ?: "(nenhuma)") + "\n\n" + api.diagnostics()
+            val txt = "##### ultima falha da app\n" + (crash ?: "(nenhuma)") + "\n\n##### passos recentes\n" + Trace.tail(120) + "\n\n" + api.diagnostics()
             try {
                 val cv = ContentValues()
                 val name = "supcamplus_diag_${System.currentTimeMillis()}.txt"

@@ -49,9 +49,12 @@ class MainActivity : ComponentActivity() {
     @Suppress("DEPRECATION")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Trace.init(this)
+        Trace.log("onCreate")
         val prev = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->
             try {
+                Trace.log("CRASH ${e.javaClass.simpleName} ${e.message}")
                 java.io.File(filesDir, "crash.txt").writeText("thread ${t.name}\n" + android.util.Log.getStackTraceString(e))
             } catch (_: Exception) {
             }
@@ -80,6 +83,26 @@ class MainActivity : ComponentActivity() {
         root.addView(bar, LinearLayout.LayoutParams(-1, -2))
         setContentView(root)
         select(true)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        Trace.log("onStart")
+    }
+
+    override fun onStop() {
+        Trace.log("onStop finishing=$isFinishing")
+        super.onStop()
+    }
+
+    override fun onDestroy() {
+        Trace.log("onDestroy finishing=$isFinishing config=$isChangingConfigurations")
+        super.onDestroy()
+    }
+
+    override fun onTrimMemory(level: Int) {
+        Trace.log("onTrimMemory $level")
+        super.onTrimMemory(level)
     }
 
     private fun tab(label: String, onClick: () -> Unit): TextView {
