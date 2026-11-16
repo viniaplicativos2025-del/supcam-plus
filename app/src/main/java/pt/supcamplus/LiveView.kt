@@ -1,6 +1,10 @@
 package pt.supcamplus
 
+import android.app.ActivityManager
+import android.app.AlertDialog
 import android.content.ContentValues
+import android.content.Context
+import android.os.Build
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
@@ -320,7 +324,36 @@ class LiveView(
         alive = true
         ui.removeCallbacks(trkTick)
         ui.post(trkTick)
+        showLastCrash()
         connect()
+    }
+
+    // Mostra porque a app fechou da última vez (excepção Java ou motivo de saída do sistema).
+    private fun showLastCrash() {
+        try {
+            val f = java.io.File(act.filesDir, "crash.txt")
+            var msg: String? = null
+            if (f.exists()) {
+                msg = f.readText()
+                f.renameTo(java.io.File(act.filesDir, "crash_shown.txt"))
+            } else if (Build.VERSION.SDK_INT >= 30) {
+                val am = act.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+                val ex = am.getHistoricalProcessExitReasons(act.packageName, 0, 1).firstOrNull()
+                val sp = act.getSharedPreferences("diag", Context.MODE_PRIVATE)
+                if (ex != null && ex.timestamp > sp.getLong("exitTs", 0L) &&
+                    ex.reason in 2..9
+                ) {
+                    msg = "Saída anterior: motivo=${ex.reason} (2 sinal, 3 memória, 4 erro Java, 5 erro nativo, 6 ANR) ${ex.description}"
+                }
+                if (ex != null) sp.edit().putLong("exitTs", ex.timestamp).apply()
+            }
+            if (msg != null) {
+                java.io.File(act.filesDir, "crash_shown.txt").writeText(msg)
+                AlertDialog.Builder(act).setTitle("A app fechou da última vez")
+                    .setMessage(msg.take(1200)).setPositiveButton("OK", null).show()
+            }
+        } catch (_: Throwable) {
+        }
     }
 
     override fun onDetachedFromWindow() {
@@ -548,7 +581,7 @@ class LiveView(
         setStatus("A recolher diagnóstico…")
         io.execute {
             val crash = try {
-                java.io.File(act.filesDir, "crash.txt").takeIf { it.exists() }?.readText()
+                java.io.File(act.filesDir, "crash_shown.txt").takeIf { it.exists() }?.readText()
             } catch (_: Exception) {
                 null
             }
