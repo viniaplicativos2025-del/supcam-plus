@@ -429,19 +429,37 @@ class LiveView(
         }
     }
 
+    // Em segundo plano liberta o descodificador (evita ser morto por falta de memória).
+    fun pauseStream() {
+        Trace.log("pauseStream")
+        ui.removeCallbacks(beat)
+        ui.removeCallbacks(tick)
+        player?.release()
+        player = null
+    }
+
+    fun resumeStream() {
+        if (player == null && alive) {
+            Trace.log("resumeStream")
+            connect()
+        }
+    }
+
     private fun startPlayer(url: String) {
         Trace.log("startPlayer")
         player?.release()
+        // Modos de vídeo: stream mais pesado, buffer maior para não ciclar em rebuffer.
+        val heavy = mode in 0..3
         val lc = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(100, 500, 50, 100)
+            .apply { if (heavy) setBufferDurationsMs(500, 2000, 250, 500) else setBufferDurationsMs(100, 500, 50, 100) }
             .build()
         val p = ExoPlayer.Builder(act).setLoadControl(lc).build()
         val live = MediaItem.LiveConfiguration.Builder()
             .setTargetOffsetMs(200)
-            .setMinOffsetMs(50)
-            .setMaxOffsetMs(600)
+            .setMinOffsetMs(if (heavy) 200 else 50)
+            .setMaxOffsetMs(if (heavy) 1500 else 600)
             .setMinPlaybackSpeed(1.0f)
-            .setMaxPlaybackSpeed(1.5f)
+            .setMaxPlaybackSpeed(if (heavy) 1.05f else 1.5f)
             .build()
         val item = MediaItem.Builder().setUri(url).setLiveConfiguration(live).build()
         val src = RtspMediaSource.Factory().setForceUseRtpTcp(useTcp)

@@ -88,10 +88,12 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         Trace.log("onStart")
+        live.resumeStream()
     }
 
     override fun onStop() {
         Trace.log("onStop finishing=$isFinishing")
+        live.pauseStream()
         super.onStop()
     }
 

@@ -152,6 +152,14 @@ class CameraApi(val ip: String = "192.168.1.1") {
         for (p in listOf("Camera.Preview.*", "Camera.Menu.*", "Camera.Menu.UIMode", "Camera.Menu.CardInfo.*")) {
             sec("get $p", httpGet("$base/cgi-bin/Config.cgi?action=get&property=$p"))
         }
+        // Sondas de listagem de ficheiros do cartão (formato desconhecido; só para ver o que a câmara responde).
+        for (u in listOf(
+            "/cgi-bin/Config.cgi?action=dir&property=DCIM&format=all&count=20&from=0",
+            "/cgi-bin/Config.cgi?action=dir&property=Normal&format=all&count=20&from=0",
+            "/cgi-bin/Config.cgi?action=dir&property=Movie&format=all&count=20&from=0",
+            "/cgi-bin/Config.cgi?action=get&property=Camera.Menu.FileList.*",
+            "/DCIM/", "/DCIM/Movie/", "/DCIM/Photo/", "/DCIM/100MEDIA/", "/sd/DCIM/", "/mmc/DCIM/"
+        )) sec("sonda $u", httpGet(base + u)?.take(3000))
         sec("cammenu.xml", httpGet("$base/cammenu.xml"))
         for (f in listOf(GENERAL_FILE) + modeFiles + "user_modes_setting") sec(f, httpGet(menuDir + f))
         return sb.toString()
