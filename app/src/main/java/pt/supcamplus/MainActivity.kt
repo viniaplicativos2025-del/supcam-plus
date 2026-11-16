@@ -25,6 +25,27 @@ class MainActivity : ComponentActivity() {
         if (uri != null) editor.load(uri)
     }
 
+    private val pickAudio = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) editor.setMusic(uri)
+    }
+
+    private var permDone: (() -> Unit)? = null
+    private val perms = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        permDone?.invoke()
+        permDone = null
+    }
+
+    private fun askTrackPerms(done: () -> Unit) {
+        permDone = done
+        perms.launch(
+            arrayOf(
+                android.Manifest.permission.ACCESS_FINE_LOCATION,
+                android.Manifest.permission.ACCESS_COARSE_LOCATION,
+                android.Manifest.permission.POST_NOTIFICATIONS
+            )
+        )
+    }
+
     @Suppress("DEPRECATION")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -32,8 +53,8 @@ class MainActivity : ComponentActivity() {
         window.navigationBarColor = Ui.CARD
         bindWifi()
 
-        live = LiveView(this, CameraApi())
-        editor = EditorView(this) { pick.launch("video/*") }
+        live = LiveView(this, CameraApi()) { askTrackPerms(it) }
+        editor = EditorView(this, { pick.launch("video/*") }, { pickAudio.launch("audio/*") })
         content = FrameLayout(this)
 
         val bar = LinearLayout(this)

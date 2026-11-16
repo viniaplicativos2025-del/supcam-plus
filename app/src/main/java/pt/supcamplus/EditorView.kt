@@ -23,6 +23,12 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.common.audio.AudioProcessor
+import androidx.media3.common.audio.ChannelMixingAudioProcessor
+import androidx.media3.common.audio.ChannelMixingMatrix
+import androidx.media3.effect.BitmapOverlay
+import androidx.media3.effect.OverlayEffect
+import androidx.media3.transformer.EditedMediaItemSequence
+import com.google.common.collect.ImmutableList
 import androidx.media3.common.audio.SonicAudioProcessor
 import androidx.media3.effect.Brightness
 import androidx.media3.effect.Contrast
@@ -42,7 +48,11 @@ import java.io.File
 import java.io.FileInputStream
 
 // Editor: cortar, rodar (90/180/270), espelhar, velocidade, sem áudio, guardar fotograma.
-class EditorView(private val act: ComponentActivity, private val onPick: () -> Unit) : LinearLayout(act) {
+class EditorView(
+    private val act: ComponentActivity,
+    private val onPick: () -> Unit,
+    private val onPickAudio: () -> Unit
+) : LinearLayout(act) {
 
     private val ui = Handler(Looper.getMainLooper())
     private val box = LinearLayout(act)
@@ -61,6 +71,18 @@ class EditorView(private val act: ComponentActivity, private val onPick: () -> U
     private var flipH = false
     private var flipV = false
     private var mute = false
+    private var musicUri: Uri? = null
+    private var musicVol = 1f
+    private val lblMusic = Ui.text(act, "Sem música.", 13f, Ui.MUTED)
+    private val trackBox = LinearLayout(act)
+    private var track: TrackData? = null
+    private var recIdx = 0
+    private var syncMs = 0L
+    private var showSpd = true
+    private var showTilt = true
+    private var outW = 0
+    private var outH = 0
+    private val lblSync = Ui.text(act, "Ajuste de sincronização: 0,0 s", 12f, Ui.MUTED)
     private var bright = 0f
     private var contr = 0f
     private var satur = 0f
@@ -141,11 +163,82 @@ class EditorView(private val act: ComponentActivity, private val onPick: () -> U
             Ui.group(act, listOf("Cor", "Preto e branco"), 0) { satur = if (it == 1) -1f else 0f; applyColorPreview() }
         )
 
-        card("Velocidade", Ui.group(act, speeds.map { "${it}×" }, speedIdx) { speedIdx = it })
+        card(
+            "Música",
+            Ui.button(act, "Escolher música", false) { onPickAudio() },
+            lblMusic,
+            Ui.group(act, listOf("Volume 100%", "60%", "30%"), 0) { musicVol = floatArrayOf(1f, 0.6f, 0.3f)[it] },
+            Ui.button(act, "Remover música", false) { musicUri = null; lblMusic.text = "Sem música." }
+        )
+
+        val sync = SeekBar(act)
+        sync.max = 200
+        sync.progress = 100
+        sync.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
+                syncMs = (p - 100) * 100L
+                lblSync.text = "Ajuste de sincronização: %.1f s".format((p - 100) / 10f)
+            }
+
+            override fun onStartTrackingTouch(s: SeekBar?) {}
+            override fun onStopTrackingTouch(s: SeekBar?) {}
+        })
+        val sw = LinearLayout(act)
+        sw.addView(toggle("Velocidade", { showSpd }, { showSpd = it }))
+        sw.addView(toggle("Inclinação", { showTilt }, { showTilt = it }), Ui.lp(act, -2, -2, l = 6))
+        card("Dados GPS e inclinação (no vídeo exportado)", trackBox, lblSync, sync, sw)
+
+        card("Velocidade", Ui.group(act, speeds.map { "${it}×" }, speedIdx) { speedIdx = it; player?.setPlaybackSpeed(speeds[it]) })
 
         box.addView(Ui.button(act, "Exportar vídeo", true) { export() }, Ui.lp(act, -1, -2, t = 16))
         box.addView(Ui.button(act, "Guardar fotograma atual", false) { saveFrame() }, Ui.lp(act, -1, -2, t = 8))
         box.addView(info, Ui.lp(act, -1, -2, t = 12))
+    }
+
+    fun setMusic(u: Uri) {
+        musicUri = u
+        lblMusic.text = "Música escolhida."
+    }
+
+    private fun refreshTracks() {
+        trackBox.removeAllViews()
+        val files = TrackService.tracksDir(act).listFiles { f -> f.name.endsWith(".csv") }
+            ?.sortedByDescending { it.name } ?: emptyList()
+        if (files.isEmpty()) {
+            trackBox.addView(Ui.text(act, "Sem registos. Inicia o registo no separador Direto antes de gravar.", 13f, Ui.MUTED))
+            return
+        }
+        val labels = files.take(6).map {
+            val n = it.name.removePrefix("track_").removeSuffix(".csv")
+            if (n.length >= 13) "${n.substring(6, 8)}/${n.substring(4, 6)} ${n.substring(9, 11)}:${n.substring(11, 13)}" else n
+        }
+        trackBox.addView(Ui.text(act, "Registo", 12f, Ui.MUTED))
+        trackBox.addView(Ui.group(act, labels, -1) { i -> loadTrack(files[i]) }, Ui.lp(act, -1, -2, t = 4))
+    }
+
+    private fun loadTrack(f: java.io.File) {
+        val d = TrackData(f)
+        track = d
+        recIdx = 0
+        while (trackBox.childCount > 2) trackBox.removeViewAt(2)
+        if (d.isEmpty()) {
+            info.text = "Registo vazio."
+            return
+        }
+        if (d.recStarts.isEmpty()) {
+            trackBox.addView(Ui.text(act, "Sem marca de início de gravação; usa o início do registo e o ajuste de sincronização.", 12f, Ui.MUTED), Ui.lp(act, -1, -2, t = 6))
+        } else {
+            val fmt = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
+            val ls = d.recStarts.mapIndexed { k, ms -> "Gravação ${k + 1} (${fmt.format(java.util.Date(ms))})" }
+            trackBox.addView(Ui.text(act, "Gravação a usar", 12f, Ui.MUTED), Ui.lp(act, -1, -2, t = 8))
+            trackBox.addView(Ui.group(act, ls, 0) { recIdx = it }, Ui.lp(act, -1, -2, t = 4))
+        }
+        info.text = "Registo carregado: ${d.t.size} amostras."
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        refreshTracks()
     }
 
     private fun slider(label: String, set: (Float) -> Unit): LinearLayout {
@@ -249,6 +342,8 @@ class EditorView(private val act: ComponentActivity, private val onPick: () -> U
         p.addListener(object : Player.Listener {
             override fun onVideoSizeChanged(v: VideoSize) {
                 if (v.height > 0) ar.setAspectRatio(v.width * v.pixelWidthHeightRatio / v.height)
+                outW = v.width
+                outH = v.height
             }
 
             override fun onPlaybackStateChanged(state: Int) {
@@ -296,6 +391,31 @@ class EditorView(private val act: ComponentActivity, private val onPick: () -> U
             )
         }
         video.addAll(colorEffects())
+        val td = track
+        if (td != null && !td.isEmpty() && (showSpd || showTilt) && outW > 0 && outH > 0) {
+            val swap = rot == 90 || rot == 270
+            val fw = if (swap) outH else outW
+            val fh = if (swap) outW else outH
+            val bw = 1280
+            val bh = (bw.toLong() * fh / fw).toInt().coerceAtLeast(2)
+            val base = (if (td.recStarts.isNotEmpty()) td.recStarts[recIdx.coerceIn(0, td.recStarts.size - 1)] else td.t[0]) + syncMs + startMs()
+            val spd = showSpd
+            val tilt = showTilt
+            var slot = -1L
+            var cache: android.graphics.Bitmap? = null
+            val ov = object : BitmapOverlay() {
+                override fun getBitmap(presentationTimeUs: Long): android.graphics.Bitmap {
+                    val sl = presentationTimeUs / 100000L
+                    val c = cache
+                    if (c != null && sl == slot) return c
+                    val b = Hud.draw(td, base + presentationTimeUs / 1000, bw, bh, spd, tilt)
+                    slot = sl
+                    cache = b
+                    return b
+                }
+            }
+            video.add(OverlayEffect(ImmutableList.of(ov)))
+        }
         val speed = speeds[speedIdx]
         if (speed != 1f) {
             video.add(SpeedChangeEffect(speed))
@@ -328,7 +448,26 @@ class EditorView(private val act: ComponentActivity, private val onPick: () -> U
             .build()
         exporting = true
         info.text = "A exportar…"
-        transformer.start(item, out.path)
+        val mu = musicUri
+        if (mu != null) {
+            val mAudio = ArrayList<AudioProcessor>()
+            if (musicVol < 1f) {
+                val mix = ChannelMixingAudioProcessor()
+                mix.putChannelMixingMatrix(ChannelMixingMatrix.create(1, 2).scaleBy(musicVol))
+                mix.putChannelMixingMatrix(ChannelMixingMatrix.create(2, 2).scaleBy(musicVol))
+                mAudio.add(mix)
+            }
+            val mItem = EditedMediaItem.Builder(MediaItem.fromUri(mu))
+                .setRemoveVideo(true)
+                .setEffects(Effects(mAudio, emptyList()))
+                .build()
+            val comp = Composition.Builder(
+                listOf(EditedMediaItemSequence(listOf(item)), EditedMediaItemSequence(listOf(mItem), true))
+            ).build()
+            transformer.start(comp, out.path)
+        } else {
+            transformer.start(item, out.path)
+        }
 
         val holder = ProgressHolder()
         val poll = object : Runnable {

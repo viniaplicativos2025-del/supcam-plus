@@ -28,7 +28,11 @@ import java.util.concurrent.Executors
 
 // Ecrã em direto: vídeo em cima e, por baixo, modos, obturador e definições.
 // As definições aplicam-se logo e o vídeo nunca fica tapado.
-class LiveView(private val act: ComponentActivity, private val api: CameraApi) : FrameLayout(act) {
+class LiveView(
+    private val act: ComponentActivity,
+    private val api: CameraApi,
+    private val askPerms: (() -> Unit) -> Unit
+) : FrameLayout(act) {
 
     private val ui = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
@@ -38,6 +42,8 @@ class LiveView(private val act: ComponentActivity, private val api: CameraApi) :
     private val videoBox = FrameLayout(act)
     private val statusChip = Ui.text(act, "", 12f, Color.WHITE)
     private val latChip = Ui.text(act, "", 11f, Color.WHITE)
+    private val trkInfo = Ui.text(act, "", 12f, Ui.MUTED)
+    private lateinit var trkBtn: TextView
 
     private val body = LinearLayout(act)
     private val panel = LinearLayout(act)
@@ -136,6 +142,7 @@ class LiveView(private val act: ComponentActivity, private val api: CameraApi) :
             Ui.group(act, listOf("UDP (mais rápido)", "TCP (mais estável)"), 0) { useTcp = it == 1; connect() },
             Ui.lp(act, -1, -2, t = 6)
         )
+        buildTrackCard()
         val tools = LinearLayout(act)
         tools.gravity = Gravity.CENTER
         tools.addView(Ui.chip(act, "Ligar de novo", false) { connect() })
@@ -194,6 +201,39 @@ class LiveView(private val act: ComponentActivity, private val api: CameraApi) :
         shutter.text = if (recording) "■" else ""
     }
 
+    private val trkTick = object : Runnable {
+        override fun run() {
+            if (!alive) return
+            trkBtn.text = if (TrackService.running) "Parar registo" else "Iniciar registo"
+            trkInfo.text = if (TrackService.running) {
+                (if (TrackService.hasFix) "%.0f km/h".format(TrackService.speed) else "sem sinal GPS") +
+                    "  ·  inclinação %.0f°  ·  subida %.0f°".format(TrackService.roll, TrackService.pitch)
+            } else "Grava velocidade e inclinação do telemóvel para usar no Editor."
+            ui.postDelayed(this, 500)
+        }
+    }
+
+    private fun buildTrackCard() {
+        ctrlView.addView(Ui.text(act, "Registo GPS e inclinação", 12f, Ui.MUTED), Ui.lp(act, -2, -2, t = 18))
+        val row = LinearLayout(act)
+        trkBtn = Ui.chip(act, "Iniciar registo", false) {
+            if (TrackService.running) {
+                TrackService.stop(act)
+            } else {
+                askPerms { TrackService.start(act) }
+            }
+        }
+        row.addView(trkBtn)
+        row.addView(Ui.chip(act, "Calibrar zero", false) { TrackService.calibrate() }, Ui.lp(act, -2, -2, l = 6))
+        row.addView(Ui.chip(act, "Inverter sinal", false) { TrackService.invert = !TrackService.invert }, Ui.lp(act, -2, -2, l = 6))
+        ctrlView.addView(row, Ui.lp(act, -2, -2, t = 6))
+        ctrlView.addView(
+            Ui.group(act, listOf("Telemóvel na vertical", "Telemóvel deitado"), 0) { TrackService.flat = it == 1 },
+            Ui.lp(act, -1, -2, t = 6)
+        )
+        ctrlView.addView(trkInfo, Ui.lp(act, -2, -2, t = 6))
+    }
+
     private fun onShutter() {
         if (mode >= 4) {
             io.execute {
@@ -204,6 +244,7 @@ class LiveView(private val act: ComponentActivity, private val api: CameraApi) :
             recording = !recording
             updateShutter()
             val v = if (recording) "recordon" else "recordoff"
+            TrackService.event(if (recording) "REC_START" else "REC_STOP")
             io.execute {
                 val r = api.cgi("set", "Video", v)
                 setStatus(if (r != null) (if (v == "recordon") "A gravar…" else "Gravação parada") else "Falhou")
@@ -281,6 +322,8 @@ class LiveView(private val act: ComponentActivity, private val api: CameraApi) :
                 ui.postDelayed(beat, 5000)
                 ui.removeCallbacks(tick)
                 ui.postDelayed(tick, 1000)
+                ui.removeCallbacks(trkTick)
+                ui.postDelayed(trkTick, 500)
             }
             loadSettings()
         }
