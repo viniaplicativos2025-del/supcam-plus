@@ -49,6 +49,7 @@ class LiveView(
     private val panel = LinearLayout(act)
     private val tabs = LinearLayout(act)
     private val ctrlView = LinearLayout(act)
+    private val ctrlScroll = ScrollView(act)
     private val setScroll = ScrollView(act)
     private val setBox = LinearLayout(act)
     private val modeHolder = LinearLayout(act)
@@ -148,7 +149,8 @@ class LiveView(
         tools.addView(Ui.chip(act, "Ligar de novo", false) { connect() })
         tools.addView(Ui.chip(act, "Diagnóstico", false) { saveDiag() }, Ui.lp(act, -2, -2, l = 8))
         ctrlView.addView(tools, Ui.lp(act, -1, -2, t = 18))
-        panel.addView(ctrlView, Ui.lp(act, -1, -2, t = 4))
+        ctrlScroll.addView(ctrlView)
+        panel.addView(ctrlScroll, Ui.lp(act, -1, 0, t = 4, weight = 1f))
 
         setBox.orientation = LinearLayout.VERTICAL
         setBox.setPadding(0, 0, 0, dp(24))
@@ -181,7 +183,7 @@ class LiveView(
     }
 
     private fun showTab(settings: Boolean) {
-        ctrlView.visibility = if (settings) View.GONE else View.VISIBLE
+        ctrlScroll.visibility = if (settings) View.GONE else View.VISIBLE
         setScroll.visibility = if (settings) View.VISIBLE else View.GONE
         Ui.styleChip(tabA, !settings, act)
         Ui.styleChip(tabB, settings, act)
@@ -220,7 +222,12 @@ class LiveView(
             if (TrackService.running) {
                 TrackService.stop(act)
             } else {
-                askPerms { TrackService.start(act) }
+                askPerms {
+                    if (act.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) ==
+                        android.content.pm.PackageManager.PERMISSION_GRANTED
+                    ) TrackService.start(act)
+                    else setStatus("Sem permissão de localização: o registo não pode começar.")
+                }
             }
         }
         row.addView(trkBtn)
@@ -295,6 +302,8 @@ class LiveView(
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         alive = true
+        ui.removeCallbacks(trkTick)
+        ui.post(trkTick)
         connect()
     }
 
@@ -322,8 +331,6 @@ class LiveView(
                 ui.postDelayed(beat, 5000)
                 ui.removeCallbacks(tick)
                 ui.postDelayed(tick, 1000)
-                ui.removeCallbacks(trkTick)
-                ui.postDelayed(trkTick, 500)
             }
             loadSettings()
         }
@@ -385,10 +392,74 @@ class LiveView(
         applyFlip()
     }
 
+    private val sdInfo = Ui.text(act, "A ler cartão…", 14f, Ui.TEXT)
+
+    private fun readable(b: Long): String {
+        val u = arrayOf("B", "KB", "MB", "GB", "TB")
+        var v = b.toDouble()
+        var i = 0
+        while (v >= 1024 && i < u.size - 1) {
+            v /= 1024
+            i++
+        }
+        return "%.1f %s".format(v, u[i])
+    }
+
+    private fun refreshSd() {
+        io.execute {
+            val raw = api.cgiRaw("get", "Camera.Menu.CardInfo.*")
+            val txt = if (raw == null) "Sem resposta da câmara." else {
+                val m = HashMap<String, String>()
+                Regex("(\\w+)=([^,\\n]+)").findAll(raw).forEach { m[it.groupValues[1]] = it.groupValues[2].trim() }
+                val parts = m["size"]?.split(":")
+                val a = parts?.getOrNull(0)?.toLongOrNull()
+                val b = parts?.getOrNull(1)?.toLongOrNull()
+                if (a != null && b != null) "${readable(a)} / ${readable(b)}" else "Formato não reconhecido: " + raw.replace('\n', ' ').take(120)
+            }
+            ui.post { sdInfo.text = txt }
+        }
+    }
+
+    private fun addSdCard() {
+        setBox.addView(Ui.text(act, "Cartão de memória", 15f, Ui.ACCENT, true), Ui.lp(act, -1, -2, t = 16, b = 2))
+        val card = LinearLayout(act)
+        card.orientation = LinearLayout.VERTICAL
+        card.background = Ui.bg(Ui.CARD, 14, act)
+        card.setPadding(dp(12), dp(10), dp(12), dp(12))
+        card.addView(Ui.text(act, "Capacidade (livre / total, como a app original)", 13f, Ui.MUTED))
+        card.addView(sdInfo, Ui.lp(act, -2, -2, t = 4))
+        val row = LinearLayout(act)
+        row.addView(Ui.chip(act, "Atualizar", false) { refreshSd() })
+        row.addView(Ui.chip(act, "Formatar…", false) { confirmFormat() }, Ui.lp(act, -2, -2, l = 8))
+        card.addView(row, Ui.lp(act, -2, -2, t = 8))
+        setBox.addView(card, Ui.lp(act, -1, -2, t = 8))
+        refreshSd()
+    }
+
+    private fun confirmFormat() {
+        android.app.AlertDialog.Builder(act)
+            .setTitle("Formatar cartão")
+            .setMessage("Isto apaga TODAS as fotos e vídeos do cartão da câmara e não se pode desfazer. Continuar?")
+            .setNegativeButton("Cancelar", null)
+            .setPositiveButton("Formatar") { _, _ ->
+                setStatus("A formatar…")
+                io.execute {
+                    if (recording) api.cgi("set", "Video", "recordoff")
+                    recording = false
+                    val r = api.cgiRaw("set", "SD0", "format")
+                    setStatus(if (r != null) "Formatação pedida" else "Falhou a formatar")
+                    Thread.sleep(3000)
+                    refreshSd()
+                }
+            }
+            .show()
+    }
+
     private fun buildSettings(general: List<CameraApi.Menu>, modeMenus: List<CameraApi.Menu>) {
         setBox.removeAllViews()
         val a = addSection("Modo atual: ${modeNames[mode]}", modeMenus)
         val b = addSection("Geral", general)
+        addSdCard()
         if (!a && !b) {
             setBox.addView(
                 Ui.text(act, "Não consegui ler os menus da câmara. Usa Diagnóstico e envia o ficheiro.", 14f, Ui.MUTED),

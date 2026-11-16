@@ -149,7 +149,7 @@ class CameraApi(val ip: String = "192.168.1.1") {
         fun sec(t: String, v: String?) {
             sb.append("##### ").append(t).append('\n').append(v ?: "(sem resposta)").append("\n\n")
         }
-        for (p in listOf("Camera.Preview.*", "Camera.Menu.*", "Camera.Menu.UIMode")) {
+        for (p in listOf("Camera.Preview.*", "Camera.Menu.*", "Camera.Menu.UIMode", "Camera.Menu.CardInfo.*")) {
             sec("get $p", httpGet("$base/cgi-bin/Config.cgi?action=get&property=$p"))
         }
         sec("cammenu.xml", httpGet("$base/cammenu.xml"))
