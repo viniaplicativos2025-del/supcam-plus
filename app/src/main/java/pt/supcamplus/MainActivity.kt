@@ -49,6 +49,14 @@ class MainActivity : ComponentActivity() {
     @Suppress("DEPRECATION")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val prev = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            try {
+                java.io.File(filesDir, "crash.txt").writeText("thread ${t.name}\n" + android.util.Log.getStackTraceString(e))
+            } catch (_: Exception) {
+            }
+            prev?.uncaughtException(t, e)
+        }
         window.statusBarColor = Ui.BG
         window.navigationBarColor = Ui.CARD
         bindWifi()

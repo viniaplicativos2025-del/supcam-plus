@@ -261,32 +261,48 @@ class LiveView(
 
     private fun selectMode(n: Int) {
         setStatus("A mudar para ${modeNames[n]}…")
+        ui.post {
+            ui.removeCallbacks(beat)
+            ui.removeCallbacks(tick)
+            try {
+                player?.release()
+            } catch (_: Exception) {
+            }
+            player = null
+        }
         io.execute {
-            var ok = false
-            var resp = ""
-            for (prop in listOf("sysworkmode", "Camera.Menu.sysworkmode")) {
-                resp = api.cgiRaw("set", prop, "MODE$n") ?: "sem resposta"
-                for (i in 1..12) {
-                    Thread.sleep(500)
-                    val cur = api.cgi("get", "Camera.Menu.sysworkmode")?.get("Camera.Menu.sysworkmode")
-                    if (cur == "MODE$n") {
-                        ok = true
-                        break
+            try {
+                var ok = false
+                var resp = ""
+                for (prop in listOf("sysworkmode", "Camera.Menu.sysworkmode")) {
+                    resp = api.cgiRaw("set", prop, "MODE$n") ?: "sem resposta"
+                    for (i in 1..12) {
+                        Thread.sleep(500)
+                        val cur = api.cgi("get", "Camera.Menu.sysworkmode")?.get("Camera.Menu.sysworkmode")
+                        if (cur == "MODE$n") {
+                            ok = true
+                            break
+                        }
                     }
+                    if (ok) break
                 }
-                if (ok) break
+                if (!ok) {
+                    setStatus("O modo não mudou. Resposta: " + resp.replace('\n', ' ').take(80))
+                    ui.post { buildModeRow() }
+                    connect()
+                    return@execute
+                }
+                ui.post {
+                    mode = n
+                    recording = false
+                    updateShutter()
+                }
+                // a câmara reinicia o pipeline de vídeo ao mudar de modo
+                Thread.sleep(2500)
+                connect()
+            } catch (e: Throwable) {
+                setStatus("Erro ao mudar de modo: ${e.javaClass.simpleName} ${e.message}")
             }
-            if (!ok) {
-                setStatus("O modo não mudou. Resposta: " + resp.replace('\n', ' ').take(80))
-                ui.post { buildModeRow() }
-                return@execute
-            }
-            ui.post {
-                mode = n
-                recording = false
-                updateShutter()
-            }
-            connect()
         }
     }
 
@@ -326,7 +342,12 @@ class LiveView(
             api.cgi("set", "StreamStatus", "ON")
             val url = api.liveUrl(preview["Camera.Preview.RTSP.av"])
             ui.post {
-                startPlayer(url)
+                if (!alive) return@post
+                try {
+                    startPlayer(url)
+                } catch (e: Throwable) {
+                    setStatus("Erro no vídeo: ${e.javaClass.simpleName} ${e.message}")
+                }
                 ui.removeCallbacks(beat)
                 ui.postDelayed(beat, 5000)
                 ui.removeCallbacks(tick)
@@ -338,6 +359,14 @@ class LiveView(
 
     // Lê valores e menus do modo atual (corre fora do fio principal).
     private fun loadSettings() {
+        try {
+            loadSettings0()
+        } catch (e: Throwable) {
+            setStatus("Erro nas definições: ${e.javaClass.simpleName} ${e.message}")
+        }
+    }
+
+    private fun loadSettings0() {
         val v = api.cgi("get", "Camera.Menu.*") ?: emptyMap()
         val n = v["Camera.Menu.sysworkmode"]?.removePrefix("MODE")?.toIntOrNull()
         val md = if (n != null && n in 0..7) n else mode
@@ -345,11 +374,15 @@ class LiveView(
         val modeMenus = api.loadMenus(CameraApi.modeFiles[md])
         ui.post {
             if (alive) {
-                vals = v
-                mode = md
-                buildModeRow()
-                updateShutter()
-                buildSettings(general, modeMenus)
+                try {
+                    vals = v
+                    mode = md
+                    buildModeRow()
+                    updateShutter()
+                    buildSettings(general, modeMenus)
+                } catch (e: Throwable) {
+                    setStatus("Erro no ecrã de definições: ${e.javaClass.simpleName} ${e.message}")
+                }
             }
         }
     }
@@ -357,15 +390,15 @@ class LiveView(
     private fun startPlayer(url: String) {
         player?.release()
         val lc = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(250, 1000, 100, 250)
+            .setBufferDurationsMs(100, 500, 50, 100)
             .build()
         val p = ExoPlayer.Builder(act).setLoadControl(lc).build()
         val live = MediaItem.LiveConfiguration.Builder()
-            .setTargetOffsetMs(300)
-            .setMinOffsetMs(100)
-            .setMaxOffsetMs(1500)
-            .setMinPlaybackSpeed(0.97f)
-            .setMaxPlaybackSpeed(1.15f)
+            .setTargetOffsetMs(200)
+            .setMinOffsetMs(50)
+            .setMaxOffsetMs(600)
+            .setMinPlaybackSpeed(1.0f)
+            .setMaxPlaybackSpeed(1.5f)
             .build()
         val item = MediaItem.Builder().setUri(url).setLiveConfiguration(live).build()
         val src = RtspMediaSource.Factory().setForceUseRtpTcp(useTcp)
@@ -514,7 +547,12 @@ class LiveView(
     private fun saveDiag() {
         setStatus("A recolher diagnóstico…")
         io.execute {
-            val txt = api.diagnostics()
+            val crash = try {
+                java.io.File(act.filesDir, "crash.txt").takeIf { it.exists() }?.readText()
+            } catch (_: Exception) {
+                null
+            }
+            val txt = "##### ultima falha da app\n" + (crash ?: "(nenhuma)") + "\n\n" + api.diagnostics()
             try {
                 val cv = ContentValues()
                 val name = "supcamplus_diag_${System.currentTimeMillis()}.txt"
