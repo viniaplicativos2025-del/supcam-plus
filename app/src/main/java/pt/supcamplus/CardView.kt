@@ -67,8 +67,18 @@ class CardView(
         if (!loaded) refresh()
     }
 
+    private var inPlayback = false
+
     override fun onDetachedFromWindow() {
         closePreview()
+        if (inPlayback) {
+            inPlayback = false
+            loaded = false
+            Thread {
+                val r = api.cgiRaw("set", "Playback", "exit")
+                Trace.log("Playback exit -> ${r?.replace('\n', ' ')?.take(40)}")
+            }.start()
+        }
         super.onDetachedFromWindow()
     }
 
@@ -150,9 +160,14 @@ class CardView(
                 val items = ArrayList<Item>()
                 val seen = HashSet<String>()
                 var raw = ""
-                for (prop in listOf("DCIM", "Normal", "Movie", "Photo", "Event")) {
+                // A câmara só lista o cartão em modo de reprodução (como a SupCam Pro faz).
+                val enter = api.cgiRaw("set", "Playback", "enter")
+                Trace.log("Playback enter -> ${enter?.replace('\n', ' ')?.take(40)}")
+                inPlayback = true
+                Thread.sleep(1500)
+                for (prop in listOf("Normal", "Event", "Parking", "Photo", "DCIM")) {
                     val r = api.httpGet(
-                        "http://${api.ip}/cgi-bin/Config.cgi?action=dir&property=$prop&format=all&count=100&from=0"
+                        "http://${api.ip}/cgi-bin/Config.cgi?action=dir&property=$prop&format=all&from=0&count=100"
                     ) ?: continue
                     raw = r
                     for (m in Regex("<file>(.*?)</file>", RegexOption.DOT_MATCHES_ALL).findAll(r)) {

@@ -369,7 +369,15 @@ class LiveView(
         super.onDetachedFromWindow()
     }
 
+    private var lastConnect = 0L
+
     private fun connect() {
+        val now = System.currentTimeMillis()
+        if (now - lastConnect < 1500) {
+            Trace.log("connect ignorado (repetido)")
+            return
+        }
+        lastConnect = now
         Trace.log("connect")
         setStatus("A ligar à câmara ${api.ip}…")
         io.execute {
