@@ -182,7 +182,7 @@ class CardView(
                 ui.post {
                     list.removeAllViews()
                     if (items.isEmpty()) {
-                        status.text = "Sem ficheiros na lista. Resposta da câmara:\n" + raw.take(300)
+                        status.text = if (raw.isEmpty()) "Sem resposta da câmara." else "A câmara respondeu 0 ficheiros (cartão sem gravações?).\n" + raw.take(200)
                     } else {
                         status.text = "${items.size} ficheiros. Toca para ver a amostra."
                         for (it in items.sortedByDescending { it.name }) addRow(it)

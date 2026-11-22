@@ -373,7 +373,7 @@ class LiveView(
 
     private fun connect() {
         val now = System.currentTimeMillis()
-        if (now - lastConnect < 1500) {
+        if (now - lastConnect < 3000) {
             Trace.log("connect ignorado (repetido)")
             return
         }
@@ -381,7 +381,14 @@ class LiveView(
         Trace.log("connect")
         setStatus("A ligar à câmara ${api.ip}…")
         io.execute {
-            val preview = api.cgi("get", "Camera.Preview.*")
+            // Depois de sair do modo Playback a câmara demora a voltar: tenta até 4 vezes.
+            var preview = api.cgi("get", "Camera.Preview.*")
+            var tries = 1
+            while (preview == null && tries < 4 && alive) {
+                Thread.sleep(1500)
+                preview = api.cgi("get", "Camera.Preview.*")
+                tries++
+            }
             if (preview == null) {
                 setStatus("Sem resposta da câmara. Liga o Wi-Fi da câmara e toca em Ligar de novo.")
                 return@execute
