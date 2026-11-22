@@ -20,6 +20,8 @@ class MainActivity : ComponentActivity() {
     private lateinit var editor: EditorView
     private lateinit var tLive: TextView
     private lateinit var tEdit: TextView
+    private lateinit var tCard: TextView
+    private lateinit var card: CardView
 
     private val pick = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) editor.load(uri)
@@ -66,14 +68,17 @@ class MainActivity : ComponentActivity() {
 
         live = LiveView(this, CameraApi()) { askTrackPerms(it) }
         editor = EditorView(this, { pick.launch("video/*") }, { pickAudio.launch("audio/*") })
+        card = CardView(this, CameraApi()) { uri -> editor.load(uri); select(1) }
         content = FrameLayout(this)
 
         val bar = LinearLayout(this)
         bar.orientation = LinearLayout.HORIZONTAL
         bar.setBackgroundColor(Ui.CARD)
-        tLive = tab("Direto") { select(true) }
-        tEdit = tab("Editor") { select(false) }
+        tLive = tab("Direto") { select(0) }
+        tCard = tab("Cartão") { select(2) }
+        tEdit = tab("Editor") { select(1) }
         bar.addView(tLive, LinearLayout.LayoutParams(0, -2, 1f))
+        bar.addView(tCard, LinearLayout.LayoutParams(0, -2, 1f))
         bar.addView(tEdit, LinearLayout.LayoutParams(0, -2, 1f))
 
         val root = LinearLayout(this)
@@ -82,7 +87,7 @@ class MainActivity : ComponentActivity() {
         root.addView(content, LinearLayout.LayoutParams(-1, 0, 1f))
         root.addView(bar, LinearLayout.LayoutParams(-1, -2))
         setContentView(root)
-        select(true)
+        select(0)
     }
 
     override fun onStart() {
@@ -115,12 +120,13 @@ class MainActivity : ComponentActivity() {
         return t
     }
 
-    private fun select(isLive: Boolean) {
-        val v: View = if (isLive) live else editor
+    private fun select(i: Int) {
+        val v: View = when (i) { 0 -> live; 2 -> card; else -> editor }
         content.removeAllViews()
         content.addView(v, FrameLayout.LayoutParams(-1, -1))
-        tLive.setTextColor(if (isLive) Ui.ACCENT else Ui.MUTED)
-        tEdit.setTextColor(if (isLive) Ui.MUTED else Ui.ACCENT)
+        tLive.setTextColor(if (i == 0) Ui.ACCENT else Ui.MUTED)
+        tCard.setTextColor(if (i == 2) Ui.ACCENT else Ui.MUTED)
+        tEdit.setTextColor(if (i == 1) Ui.ACCENT else Ui.MUTED)
     }
 
     // O Android tende a largar o Wi-Fi da câmara (sem internet); força o tráfego por ele.
