@@ -82,20 +82,20 @@ class CardView(
         }
     }
 
-    private fun addRow(it: Item) {
-        val short = it.name.substringAfterLast('/')
-        val mb = if (it.size > 0) "  ${it.size / 1048576} MB" else ""
+    private fun addRow(f: Item) {
+        val short = f.name.substringAfterLast('/')
+        val mb = if (f.size > 0) "  ${f.size / 1048576} MB" else ""
         val t = Ui.text(act, short + mb, 15f, Ui.TEXT)
         t.background = Ui.bg(Ui.CARD, 10, act)
         t.setPadding(Ui.dp(act, 14), Ui.dp(act, 14), Ui.dp(act, 14), Ui.dp(act, 14))
-        t.setOnClickListener { download(it, t, short) }
+        t.setOnClickListener { download(f, t, short) }
         list.addView(t, Ui.lp(act, -1, -2, b = 8))
     }
 
-    private fun download(it: Item, row: TextView, short: String) {
+    private fun download(f: Item, row: TextView, short: String) {
         io.execute {
             val dest = File(act.getExternalFilesDir(null) ?: act.filesDir, short)
-            val n = it.name
+            val n = f.name
             val path = if (n.startsWith("/")) n else "/$n"
             val urls = listOf(path, "/SD$path", "/mmc$path", "/sd$path", "/DCIM/$short", "/DCIM/Movie/$short")
             for (u in urls) {
