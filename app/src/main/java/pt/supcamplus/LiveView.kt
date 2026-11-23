@@ -370,6 +370,7 @@ class LiveView(
     }
 
     private var lastConnect = 0L
+    private var lastUrl: String? = null
 
     private fun connect() {
         val now = System.currentTimeMillis()
@@ -396,6 +397,7 @@ class LiveView(
             api.cgi("set", "StreamStatus", "ON")
             val url = api.liveUrl(preview["Camera.Preview.RTSP.av"])
             Trace.log("url $url")
+            lastUrl = url
             ui.post {
                 if (!alive) return@post
                 try {
@@ -613,6 +615,12 @@ class LiveView(
                     vals = vals + (m.id to o.value)
                     api.cgi("set", "StreamStatus", "ON")
                     setStatus("${m.title}: ${o.label} confirmado$via")
+                    // Reinicia só o stream para a imagem refletir a definição (sem recarregar o menu).
+                    Thread.sleep(600)
+                    val u = lastUrl
+                    if (u != null) ui.post {
+                        if (alive) try { startPlayer(u) } catch (_: Throwable) { }
+                    }
                 } else {
                     setStatus("Câmara não aceitou ${m.title}. Lê '$cur2'. Resp: " + raw.replace('\n', ' ').take(70))
                 }
